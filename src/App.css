@@ -552,3 +552,57 @@ input:focus, textarea:focus, select:focus {
   font-size: 0.65rem;
   font-weight: bold;
 }
+
+/* ESTILOS JUEGO RUTA OCULTA */
+.path-grid {
+  display: grid;
+  gap: 6px;
+  max-width: 450px;
+  margin: 1.5rem auto;
+  background-color: var(--card-nested);
+  padding: 10px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+}
+
+.path-cell {
+  aspect-ratio: 1;
+  background-color: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  font-size: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: all 0.2s ease;
+}
+
+.path-cell.adjacent {
+  cursor: pointer;
+  border-color: var(--primary);
+  background-color: rgba(37, 99, 235, 0.1);
+}
+
+.path-cell.adjacent:hover {
+  transform: scale(1.05);
+  background-color: rgba(37, 99, 235, 0.25);
+}
+
+.path-cell.path-taken {
+  background-color: rgba(22, 163, 74, 0.15);
+  border-color: var(--success);
+}
+
+.path-cell.crash {
+  background-color: rgba(239, 68, 68, 0.3);
+  border-color: var(--danger);
+  animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes shake {
+  10%, 90% { transform: translate3d(-2px, 0, 0); }
+  20%, 80% { transform: translate3d(4px, 0, 0); }
+  30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+  40%, 60% { transform: translate3d(6px, 0, 0); }
+}

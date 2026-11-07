@@ -1,297 +1,290 @@
 import { useState, useEffect, useRef } from 'react'
 
-const STAGES_CONFIG = {
-  facil: {
-    rounds: [
-      {
-        obstacles: [
-          { id: 1, x: 120, y: 0, w: 25, h: 180 },
-          { id: 2, x: 230, y: 100, w: 25, h: 180 }
-        ],
-        start: { x: 35, y: 40 },
-        target: { x: 320, y: 240 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 150, y: 80, w: 30, h: 200 },
-          { id: 2, x: 240, y: 0, w: 30, h: 160 }
-        ],
-        start: { x: 35, y: 240 },
-        target: { x: 320, y: 40 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 100, y: 50, w: 150, h: 25 },
-          { id: 2, x: 120, y: 190, w: 150, h: 25 }
-        ],
-        start: { x: 35, y: 135 },
-        target: { x: 320, y: 135 }
-      }
-    ]
-  },
-  medio: {
-    rounds: [
-      {
-        obstacles: [
-          { id: 1, x: 90, y: 0, w: 22, h: 190 },
-          { id: 2, x: 170, y: 90, w: 22, h: 190 },
-          { id: 3, x: 250, y: 0, w: 22, h: 190 }
-        ],
-        start: { x: 30, y: 40 },
-        target: { x: 320, y: 240 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 80, y: 80, w: 22, h: 200 },
-          { id: 2, x: 160, y: 0, w: 22, h: 180 },
-          { id: 3, x: 240, y: 80, w: 22, h: 200 }
-        ],
-        start: { x: 30, y: 240 },
-        target: { x: 320, y: 40 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 100, y: 0, w: 22, h: 140 },
-          { id: 2, x: 100, y: 190, w: 22, h: 90 },
-          { id: 3, x: 220, y: 70, w: 22, h: 210 }
-        ],
-        start: { x: 30, y: 140 },
-        target: { x: 320, y: 140 }
-      }
-    ]
-  },
-  dificil: {
-    rounds: [
-      {
-        obstacles: [
-          { id: 1, x: 75, y: 0, w: 20, h: 200 },
-          { id: 2, x: 140, y: 80, w: 20, h: 200 },
-          { id: 3, x: 205, y: 0, w: 20, h: 200 },
-          { id: 4, x: 270, y: 80, w: 20, h: 200 }
-        ],
-        start: { x: 25, y: 40 },
-        target: { x: 330, y: 240 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 70, y: 60, w: 20, h: 220 },
-          { id: 2, x: 135, y: 0, w: 20, h: 210 },
-          { id: 3, x: 200, y: 70, w: 20, h: 210 },
-          { id: 4, x: 265, y: 0, w: 20, h: 210 }
-        ],
-        start: { x: 25, y: 240 },
-        target: { x: 330, y: 40 }
-      },
-      {
-        obstacles: [
-          { id: 1, x: 70, y: 0, w: 20, h: 170 },
-          { id: 2, x: 135, y: 110, w: 20, h: 170 },
-          { id: 3, x: 200, y: 0, w: 20, h: 170 },
-          { id: 4, x: 265, y: 110, w: 20, h: 170 }
-        ],
-        start: { x: 25, y: 140 },
-        target: { x: 330, y: 140 }
-      }
-    ]
-  }
+// Dificultad equilibrada: Ni tan lento ni imposible.
+const DIFFICULTY_CONFIG = {
+  facil: { spawnInterval: 2000, speedMulti: 0.8, maxTime: 30 },
+  medio: { spawnInterval: 1400, speedMulti: 1.2, maxTime: 30 },
+  dificil: { spawnInterval: 900, speedMulti: 1.8, maxTime: 30 }
 }
 
-const TOTAL_ROUNDS = 3
-const BOARD_W = 360
-const BOARD_H = 280
-const PLAYER_R = 14
+const OBSTACLE_TYPES = ['circle', 'square', 'triangle']
 
-export default function CoordinationGame({ difficulty = 'medio', onFinish, onCancel }) {
-  const stageConfig = STAGES_CONFIG[difficulty] || STAGES_CONFIG.medio
-  const [round, setRound] = useState(1)
-  const currentStage = stageConfig.rounds[round - 1]
+export default function CoordinationGame({ difficulty = 'medio', customTime, onFinish, onCancel }) {
+  const canvasRef = useRef(null)
+  const requestRef = useRef()
+  
+  // Calcular el tiempo a usar (el personalizado o el por defecto)
+  const getInitialTime = () => customTime ? parseInt(customTime, 10) : (DIFFICULTY_CONFIG[difficulty]?.maxTime || 30)
+  
+  const [gameState, setGameState] = useState('ready') 
+  const [timeLeft, setTimeLeft] = useState(getInitialTime())
+  const [errorCount, setErrorCount] = useState(0)
 
-  const [playerPos, setPlayerPos] = useState(currentStage.start)
-  const [isDragging, setIsDragging] = useState(false)
-  const [roundCompleted, setRoundCompleted] = useState(false)
-  const [collisionsCount, setCollisionsCount] = useState(0)
+  const engine = useRef({
+    player: { x: 200, y: 200, radius: 20 },
+    obstacles: [],
+    lastSpawn: 0,
+    errors: 0,
+    isInvulnerable: false,
+    invulnerableTimer: 0
+  })
 
-  const [errorLogs, setErrorLogs] = useState([])
-  const startTimeRef = useRef(Date.now())
-  const lastCollisionTimeRef = useRef(0)
-  const boardRef = useRef(null)
+  // Actualizar el tiempo si cambian las props antes de jugar
+  useEffect(() => {
+    if (gameState === 'ready') {
+      setTimeLeft(getInitialTime())
+    }
+  }, [difficulty, customTime])
+
+  const startGame = () => {
+    engine.current = {
+      player: { x: 200, y: 200, radius: 20 },
+      obstacles: [],
+      lastSpawn: 0,
+      errors: 0,
+      isInvulnerable: false,
+      invulnerableTimer: 0
+    }
+    setErrorCount(0)
+    setTimeLeft(getInitialTime())
+    setGameState('playing')
+  }
 
   useEffect(() => {
-    setPlayerPos(currentStage.start)
-    setRoundCompleted(false)
-  }, [round])
-
-  const checkCollision = (x, y) => {
-    for (const obs of currentStage.obstacles) {
-      if (
-        x + PLAYER_R > obs.x &&
-        x - PLAYER_R < obs.x + obs.w &&
-        y + PLAYER_R > obs.y &&
-        y - PLAYER_R < obs.y + obs.h
-      ) {
-        return obs
-      }
-    }
-    return null
-  }
-
-  const checkGoal = (x, y) => {
-    const dist = Math.hypot(x - currentStage.target.x, y - currentStage.target.y)
-    return dist < PLAYER_R + 18
-  }
-
-  const handlePointerDown = (e) => {
-    if (roundCompleted) return
-    const rect = boardRef.current.getBoundingClientRect()
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY
-    const x = clientX - rect.left
-    const y = clientY - rect.top
-
-    const distToPlayer = Math.hypot(x - playerPos.x, y - playerPos.y)
-    if (distToPlayer <= PLAYER_R * 2) {
-      setIsDragging(true)
-    }
-  }
-
-  const handlePointerMove = (e) => {
-    if (!isDragging || roundCompleted) return
-    const rect = boardRef.current.getBoundingClientRect()
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY
-
-    let x = clientX - rect.left
-    let y = clientY - rect.top
-
-    x = Math.max(PLAYER_R, Math.min(BOARD_W - PLAYER_R, x))
-    y = Math.max(PLAYER_R, Math.min(BOARD_H - PLAYER_R, y))
-
-    const hitObs = checkCollision(x, y)
-    const now = Date.now()
-    if (hitObs && now - lastCollisionTimeRef.current > 700) {
-      lastCollisionTimeRef.current = now
-      setCollisionsCount((prev) => prev + 1)
-
-      const elapsedSec = ((now - startTimeRef.current) / 1000).toFixed(1)
-      const errEntry = {
-        item: round,
-        selected: `Colisión con Obstáculo #${hitObs.id}`,
-        expected: 'Trayectoria despejada sin contacto',
-        details: `Impacto a los ${elapsedSec}s de recorrido`
-      }
-      setErrorLogs((prev) => [...prev, errEntry])
-
-      setIsDragging(false)
-      setPlayerPos(currentStage.start)
-      return
-    }
-
-    setPlayerPos({ x, y })
-
-    if (checkGoal(x, y)) {
-      setIsDragging(false)
-      setRoundCompleted(true)
-
-      setTimeout(() => {
-        if (round < TOTAL_ROUNDS) {
-          setRound((prev) => prev + 1)
-        } else {
-          finishGame()
-        }
+    let timer
+    if (gameState === 'playing') {
+      timer = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer)
+            endGame()
+            return 0
+          }
+          return prev - 1
+        })
       }, 1000)
     }
-  }
+    return () => clearInterval(timer)
+  }, [gameState])
 
-  const handlePointerUp = () => {
-    setIsDragging(false)
-  }
+  const handleMove = (e) => {
+    if (gameState !== 'playing') return
+    const canvas = canvasRef.current
+    if (!canvas) return
 
-  const finishGame = () => {
-    const totalTimeSec = Math.round((Date.now() - startTimeRef.current) / 1000)
-    const penalty = collisionsCount * 15
-    const accuracy = Math.max(20, Math.min(100, 100 - penalty))
-    const hits = Math.max(0, TOTAL_ROUNDS - Math.min(TOTAL_ROUNDS, collisionsCount))
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
 
-    const sessionResult = {
-      id: 'sess_' + Date.now(),
-      date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      category: 'Coordinación',
-      gameName: 'Evitar obstáculos',
-      difficulty: difficulty.charAt(0).toUpperCase() + difficulty.slice(1),
-      hits,
-      errorsCount: collisionsCount,
-      duration: `${totalTimeSec}s`,
-      accuracy,
-      errorLogs
+    let clientX, clientY
+    if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX
+      clientY = e.touches[0].clientY
+    } else {
+      clientX = e.clientX
+      clientY = e.clientY
     }
 
-    onFinish(sessionResult)
+    engine.current.player.x = (clientX - rect.left) * scaleX
+    engine.current.player.y = (clientY - rect.top) * scaleY
+  }
+
+  const spawnObstacle = (time, conf) => {
+    engine.current.lastSpawn = time
+    const edge = Math.floor(Math.random() * 4) 
+    const size = 15 + Math.random() * 10 // Tamaño intermedio
+    const baseSpeed = (0.8 + Math.random() * 0.5) * conf.speedMulti
+    const type = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)]
+
+    let x, y, vx, vy
+    if (edge === 0) { // Arriba
+      x = Math.random() * 400
+      y = -size
+      vx = (Math.random() - 0.5) * baseSpeed * 1.5
+      vy = baseSpeed
+    } else if (edge === 1) { // Derecha
+      x = 400 + size
+      y = Math.random() * 400
+      vx = -baseSpeed
+      vy = (Math.random() - 0.5) * baseSpeed * 1.5
+    } else if (edge === 2) { // Abajo
+      x = Math.random() * 400
+      y = 400 + size
+      vx = (Math.random() - 0.5) * baseSpeed * 1.5
+      vy = -baseSpeed
+    } else { // Izquierda
+      x = -size
+      y = Math.random() * 400
+      vx = baseSpeed
+      vy = (Math.random() - 0.5) * baseSpeed * 1.5
+    }
+
+    engine.current.obstacles.push({ x, y, vx, vy, radius: size, type })
+  }
+
+  const gameLoop = (time) => {
+    if (gameState !== 'playing') return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const st = engine.current
+    const conf = DIFFICULTY_CONFIG[difficulty] || DIFFICULTY_CONFIG.medio
+
+    if (time - st.lastSpawn > conf.spawnInterval) {
+      spawnObstacle(time, conf)
+    }
+
+    for (let i = st.obstacles.length - 1; i >= 0; i--) {
+      let obs = st.obstacles[i]
+      obs.x += obs.vx
+      obs.y += obs.vy
+
+      const dx = obs.x - st.player.x
+      const dy = obs.y - st.player.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+
+      // Colisión intermedia (multiplicador 0.85)
+      const collisionThreshold = (obs.radius + st.player.radius) * 0.85
+
+      if (distance < collisionThreshold && !st.isInvulnerable) {
+        st.errors++
+        setErrorCount(st.errors)
+        st.isInvulnerable = true
+        st.invulnerableTimer = time
+      }
+
+      if (obs.x < -100 || obs.x > 500 || obs.y < -100 || obs.y > 500) {
+        st.obstacles.splice(i, 1)
+      }
+    }
+
+    // 1.5 segundos de invulnerabilidad tras un choque
+    if (st.isInvulnerable && time - st.invulnerableTimer > 1500) {
+      st.isInvulnerable = false
+    }
+
+    // --- DIBUJAR ---
+    ctx.clearRect(0, 0, 400, 400)
+
+    // Dibujar Jugador
+    ctx.beginPath()
+    ctx.arc(st.player.x, st.player.y, st.player.radius, 0, Math.PI * 2)
+    if (st.isInvulnerable && Math.floor(time / 150) % 2 === 0) {
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.4)' 
+    } else {
+      ctx.fillStyle = '#2563eb' 
+    }
+    ctx.fill()
+    ctx.closePath()
+
+    // Dibujar Obstáculos
+    st.obstacles.forEach((obs) => {
+      if (obs.type === 'circle') {
+        ctx.fillStyle = '#ef4444' 
+        ctx.beginPath()
+        ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.closePath()
+      } else if (obs.type === 'square') {
+        ctx.fillStyle = '#f59e0b' 
+        ctx.fillRect(obs.x - obs.radius, obs.y - obs.radius, obs.radius * 2, obs.radius * 2)
+      } else if (obs.type === 'triangle') {
+        ctx.fillStyle = '#8b5cf6' 
+        ctx.beginPath()
+        ctx.moveTo(obs.x, obs.y - obs.radius)
+        ctx.lineTo(obs.x + obs.radius, obs.y + obs.radius)
+        ctx.lineTo(obs.x - obs.radius, obs.y + obs.radius)
+        ctx.fill()
+        ctx.closePath()
+      }
+    })
+
+    requestRef.current = requestAnimationFrame(gameLoop)
+  }
+
+  useEffect(() => {
+    if (gameState === 'playing') {
+      requestRef.current = requestAnimationFrame(gameLoop)
+    }
+    return () => cancelAnimationFrame(requestRef.current)
+  }, [gameState, difficulty])
+
+  const endGame = () => {
+    setGameState('feedback')
+    cancelAnimationFrame(requestRef.current)
+    
+    setTimeout(() => {
+      const finalErrors = engine.current.errors
+      const maxTime = getInitialTime()
+      const accuracy = Math.max(0, 100 - (finalErrors * 5))
+
+      const sessionResult = {
+        id: 'sess_' + Date.now(),
+        date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        category: 'Coordinación',
+        gameName: 'Evitar obstáculos',
+        difficulty: difficulty.charAt(0).toUpperCase() + difficulty.slice(1),
+        hits: maxTime, 
+        errorsCount: finalErrors,
+        duration: `${maxTime}s`,
+        accuracy,
+        errorLogs: finalErrors > 0 ? [{ item: 1, details: `El paciente colisionó ${finalErrors} veces durante los ${maxTime} segundos.` }] : []
+      }
+      onFinish(sessionResult)
+    }, 2000)
   }
 
   return (
     <div className="card game-card">
       <div className="game-header">
         <button className="btn btn-outline" onClick={onCancel}>✕ Salir</button>
-        <span className="game-meta">
-          Recorrido {round} de {TOTAL_ROUNDS} | Nivel: <strong>{difficulty.toUpperCase()}</strong>
-        </span>
+        <span className="game-meta">⏳ {timeLeft}s | <strong>{difficulty.toUpperCase()}</strong></span>
       </div>
 
-      <div className="game-body">
-        <h3 className="phase-title">🤝 Lleva el círculo hasta la meta</h3>
-        <p className="subtitle" style={{ marginBottom: '1rem' }}>
-          Arrastra ● hasta 🏁 evitando tocar los bloques rojos
-        </p>
+      <div className="game-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        
+        {gameState === 'ready' && (
+          <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+            <h3 className="phase-title">🤝 Evitar Formas</h3>
+            <p className="subtitle">Mantén el dedo sobre el <strong>círculo azul</strong> y muévelo suavemente para esquivar las figuras geométricas.</p>
+            <button className="btn btn-primary" onClick={startGame} style={{ marginTop: '1rem' }}>Comenzar</button>
+          </div>
+        )}
 
-        <div
-          ref={boardRef}
-          className="coordination-canvas"
-          onMouseDown={handlePointerDown}
-          onMouseMove={handlePointerMove}
-          onMouseUp={handlePointerUp}
-          onTouchStart={handlePointerDown}
-          onTouchMove={handlePointerMove}
-          onTouchEnd={handlePointerUp}
-          style={{ width: BOARD_W, height: BOARD_H }}
-        >
-          {currentStage.obstacles.map((obs) => (
-            <div
-              key={obs.id}
-              className="coord-obstacle"
+        {gameState === 'playing' && (
+          <div style={{ position: 'relative', width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+            <div style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: '8px', fontWeight: 'bold', color: errorCount > 0 ? '#ef4444' : '#6b7280', zIndex: 10, boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+              Choques: {errorCount}
+            </div>
+
+            <canvas
+              ref={canvasRef}
+              width={400}
+              height={400}
+              onMouseMove={handleMove}
+              onTouchMove={handleMove}
               style={{
-                left: obs.x,
-                top: obs.y,
-                width: obs.w,
-                height: obs.h
+                width: '100%',
+                aspectRatio: '1 / 1',
+                backgroundColor: 'var(--card-nested)',
+                border: '2px solid var(--border)',
+                borderRadius: '12px',
+                touchAction: 'none',
+                cursor: 'crosshair',
+                boxShadow: errorCount > 0 ? '0 0 15px rgba(239, 68, 68, 0.4)' : 'none',
+                transition: 'box-shadow 0.2s'
               }}
             />
-          ))}
-
-          <div
-            className="coord-target"
-            style={{
-              left: currentStage.target.x - 18,
-              top: currentStage.target.y - 18
-            }}
-          >
-            🏁
           </div>
+        )}
 
-          <div
-            className={`coord-player ${isDragging ? 'dragging' : ''}`}
-            style={{
-              left: playerPos.x - PLAYER_R,
-              top: playerPos.y - PLAYER_R,
-              width: PLAYER_R * 2,
-              height: PLAYER_R * 2
-            }}
-          />
-        </div>
+        {gameState === 'feedback' && (
+          <div className="feedback-banner">
+            <span className="text-success">✅ ¡Tiempo completado!</span>
+            <p style={{ marginTop: '0.5rem' }}>Tuviste {errorCount} choques en total.</p>
+          </div>
+        )}
 
-        <div className="coord-stats-bar">
-          <span>Colisiones registradas: <strong className="text-danger">{collisionsCount}</strong></span>
-          {roundCompleted && <span className="text-success">✅ ¡Meta alcanzada!</span>}
-        </div>
       </div>
     </div>
   )

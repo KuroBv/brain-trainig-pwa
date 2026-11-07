@@ -1,121 +1,120 @@
 import { useState, useEffect, useRef } from 'react'
 
-const COLORS = [
-  { id: 'blue', label: '🔵', name: 'Azul', bg: '#2563eb' },
-  { id: 'green', label: '🟢', name: 'Verde', bg: '#16a34a' },
-  { id: 'red', label: '🔴', name: 'Rojo', bg: '#dc2626' },
-  { id: 'yellow', label: '🟡', name: 'Amarillo', bg: '#ca8a04' }
-]
-
+// Configuración de la dificultad (largo de la secuencia y tiempo por defecto)
 const DIFFICULTY_CONFIG = {
-  facil: { length: 3, viewTime: 4 },
-  medio: { length: 4, viewTime: 3 },
-  dificil: { length: 5, viewTime: 2 }
+  facil: { length: 4, viewTime: 10 },
+  medio: { length: 6, viewTime: 8 },
+  dificil: { length: 8, viewTime: 5 }
 }
 
-const TOTAL_ROUNDS = 5
+// Colores disponibles para los botones
+const COLORS = [
+  { id: 0, hex: '#ef4444', name: 'Rojo' },
+  { id: 1, hex: '#3b82f6', name: 'Azul' },
+  { id: 2, hex: '#22c55e', name: 'Verde' },
+  { id: 3, hex: '#eab308', name: 'Amarillo' }
+]
 
-export default function Memorygame({ difficulty = 'medio', onFinish, onCancel }) {
-  const config = DIFFICULTY_CONFIG[difficulty] || DIFFICULTY_CONFIG.medio
+const TOTAL_ROUNDS = 4
+
+export default function Memorygame({ difficulty = 'medio', customTime, onFinish, onCancel }) {
   const [round, setRound] = useState(1)
-  const [gameState, setGameState] = useState('memorize') // 'memorize' | 'recall' | 'feedback' | 'finished'
-  const [countdown, setCountdown] = useState(config.viewTime)
-
   const [targetSequence, setTargetSequence] = useState([])
   const [userSequence, setUserSequence] = useState([])
+  
+  const [gameState, setGameState] = useState('memorize') // 'memorize' | 'play' | 'feedback'
+  const [countdown, setCountdown] = useState(999)
+  const [feedback, setFeedback] = useState(null)
 
   const [hits, setHits] = useState(0)
   const [errorLogs, setErrorLogs] = useState([])
   const startTimeRef = useRef(Date.now())
 
+  const config = DIFFICULTY_CONFIG[difficulty] || DIFFICULTY_CONFIG.medio
+
   const generateSequence = () => {
     const seq = []
     for (let i = 0; i < config.length; i++) {
       const randomIndex = Math.floor(Math.random() * COLORS.length)
-      seq.push(COLORS[randomIndex])
+      seq.push(randomIndex)
     }
     setTargetSequence(seq)
     setUserSequence([])
     setGameState('memorize')
-    setCountdown(config.viewTime)
+    
+    // LÓGICA DE TIEMPO PERSONALIZADO CORREGIDA
+    const timeToUse = customTime ? parseInt(customTime, 10) : config.viewTime
+    setCountdown(timeToUse)
+    setFeedback(null)
   }
 
   useEffect(() => {
     generateSequence()
     startTimeRef.current = Date.now()
-  }, [])
+  }, [difficulty])
 
+  // Temporizador de memorización
   useEffect(() => {
+    if (targetSequence.length === 0) return // <-- Agregamos esto para proteger el inicio
+    
     let timer
     if (gameState === 'memorize') {
       if (countdown > 0) {
-        timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000)
+        timer = setTimeout(() => setCountdown(prev => prev - 1), 1000)
       } else {
-        setGameState('recall')
+        setGameState('play')
       }
     }
     return () => clearTimeout(timer)
-  }, [gameState, countdown])
+  }, [gameState, countdown, targetSequence])
 
-  const handleColorClick = (color) => {
-    if (gameState !== 'recall') return
+  const handleColorClick = (colorId) => {
+    if (gameState !== 'play') return
 
-    const nextUserSeq = [...userSequence, color]
-    setUserSequence(nextUserSeq)
+    const newUserSeq = [...userSequence, colorId]
+    setUserSequence(newUserSeq)
 
-    if (nextUserSeq.length === targetSequence.length) {
-      evaluateRound(nextUserSeq)
+    const currentIndex = newUserSeq.length - 1
+
+    // Verificar si se equivocó
+    if (newUserSeq[currentIndex] !== targetSequence[currentIndex]) {
+      const expectedColor = COLORS.find(c => c.id === targetSequence[currentIndex])?.name
+      const selectedColor = COLORS.find(c => c.id === colorId)?.name
+      
+      const errorEntry = {
+        item: round,
+        expected: expectedColor,
+        selected: selectedColor,
+        details: `Se equivocó en el paso ${currentIndex + 1} de la secuencia`
+      }
+      setErrorLogs(prev => [...prev, errorEntry])
+      setFeedback({ ok: false })
+      endRound(false)
+      return
+    }
+
+    // Verificar si completó la secuencia entera correctamente
+    if (newUserSeq.length === targetSequence.length) {
+      setHits(prev => prev + 1)
+      setFeedback({ ok: true })
+      endRound(true)
     }
   }
 
-  const evaluateRound = (finalUserSeq) => {
-    let hasError = false
-    const positionErrors = []
-
-    for (let i = 0; i < targetSequence.length; i++) {
-      if (targetSequence[i].id !== finalUserSeq[i]?.id) {
-        hasError = true
-        positionErrors.push({
-          pos: i + 1,
-          expected: targetSequence[i].label,
-          selected: finalUserSeq[i] ? finalUserSeq[i].label : 'Omitido'
-        })
-      }
-    }
-
-    let roundErrors = []
-    if (!hasError) {
-      setHits((prev) => prev + 1)
-    } else {
-      roundErrors = [
-        {
-          item: round,
-          sequence: targetSequence.map((c) => c.label).join(' '),
-          userResponse: finalUserSeq.map((c) => c.label).join(' '),
-          details: positionErrors
-            .map((err) => `Posición ${err.pos}: Esperado ${err.expected}, Seleccionado ${err.selected}`)
-            .join(' | ')
-        }
-      ]
-      setErrorLogs((prev) => [...prev, ...roundErrors])
-    }
-
+  const endRound = (won) => {
     setGameState('feedback')
-
     setTimeout(() => {
       if (round < TOTAL_ROUNDS) {
-        setRound((prev) => prev + 1)
+        setRound(prev => prev + 1)
         generateSequence()
       } else {
-        const finalHits = hasError ? hits : hits + 1
-        const finalErrorLogs = hasError ? [...errorLogs, ...roundErrors] : errorLogs
-        finishGame(finalHits, finalErrorLogs)
+        const finalHits = won ? hits + 1 : hits
+        finishGame(finalHits)
       }
-    }, 1500)
+    }, 2000)
   }
 
-  const finishGame = (finalHits, finalErrors) => {
-    setGameState('finished')
+  const finishGame = (finalHits) => {
     const totalTimeSec = Math.round((Date.now() - startTimeRef.current) / 1000)
     const accuracy = Math.round((finalHits / TOTAL_ROUNDS) * 100)
 
@@ -129,73 +128,87 @@ export default function Memorygame({ difficulty = 'medio', onFinish, onCancel })
       errorsCount: TOTAL_ROUNDS - finalHits,
       duration: `${totalTimeSec}s`,
       accuracy,
-      errorLogs: finalErrors
+      errorLogs
     }
-
     onFinish(sessionResult)
   }
 
   return (
     <div className="card game-card">
       <div className="game-header">
-        <button className="btn btn-outline" onClick={onCancel}>
-          ✕ Salir
-        </button>
-        <span className="game-meta">
-          Ejercicio {round} de {TOTAL_ROUNDS} | Nivel: <strong>{difficulty.toUpperCase()}</strong>
-        </span>
+        <button className="btn btn-outline" onClick={onCancel}>✕ Salir</button>
+        <span className="game-meta">Ronda {round} de {TOTAL_ROUNDS} | <strong>{difficulty.toUpperCase()}</strong></span>
       </div>
 
       <div className="game-body">
         {gameState === 'memorize' && (
-          <div className="game-phase">
-            <h3 className="phase-title">👀 Observa y memoriza</h3>
-            <div className="countdown-pill">Tiempo restante: {countdown}s</div>
-            <div className="sequence-display">
-              {targetSequence.map((item, idx) => (
-                <div key={idx} className="sequence-item animated-pop" style={{ borderColor: item.bg }}>
-                  <span className="sequence-emoji">{item.label}</span>
-                </div>
-              ))}
+          <>
+            <h3 className="phase-title">👀 Memoriza la secuencia</h3>
+            <div className="countdown-pill" style={{ backgroundColor: '#ef4444', color: 'white' }}>
+              Ocultando en {countdown}s
             </div>
-          </div>
+          </>
+        )}
+        
+        {gameState === 'play' && (
+          <>
+            <h3 className="phase-title">🎮 Tu turno</h3>
+            <p className="subtitle">Repite la secuencia exacta tocando los colores.</p>
+          </>
         )}
 
-        {gameState === 'recall' && (
-          <div className="game-phase">
-            <h3 className="phase-title">👉 Repite la secuencia</h3>
-            <div className="user-slots">
-              {targetSequence.map((_, idx) => (
-                <div key={idx} className="slot-item">
-                  {userSequence[idx] ? userSequence[idx].label : '?'}
-                </div>
-              ))}
-            </div>
+        {/* Muestra la secuencia a memorizar */}
+        <div className="sequence-display" style={{ display: 'flex', gap: '10px', justifyContent: 'center', margin: '2rem 0', minHeight: '40px' }}>
+          {targetSequence.map((colorId, index) => {
+            const isVisible = gameState === 'memorize' || gameState === 'feedback' || index < userSequence.length
+            const colorHex = COLORS.find(c => c.id === colorId)?.hex
+            
+            return (
+              <div 
+                key={index} 
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  backgroundColor: isVisible ? colorHex : 'var(--border)',
+                  transition: 'background-color 0.3s'
+                }}
+              />
+            )
+          })}
+        </div>
 
-            <div className="color-buttons-grid">
-              {COLORS.map((c) => (
-                <button
-                  key={c.id}
-                  className="btn-color-choice"
-                  style={{ backgroundColor: c.bg }}
-                  onClick={() => handleColorClick(c)}
-                >
-                  <span className="choice-emoji">{c.label}</span>
-                  <span>{c.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Botones de colores para jugar */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', maxWidth: '300px', margin: '0 auto' }}>
+          {COLORS.map((color) => (
+            <button
+              key={color.id}
+              onClick={() => handleColorClick(color.id)}
+              disabled={gameState !== 'play'}
+              style={{
+                backgroundColor: color.hex,
+                aspectRatio: '1',
+                borderRadius: '12px',
+                border: 'none',
+                cursor: gameState === 'play' ? 'pointer' : 'default',
+                opacity: gameState === 'play' ? 1 : 0.5,
+                transform: 'scale(1)',
+                transition: 'transform 0.1s'
+              }}
+              onMouseDown={(e) => { if(gameState === 'play') e.currentTarget.style.transform = 'scale(0.95)' }}
+              onMouseUp={(e) => { if(gameState === 'play') e.currentTarget.style.transform = 'scale(1)' }}
+              onMouseLeave={(e) => { if(gameState === 'play') e.currentTarget.style.transform = 'scale(1)' }}
+            />
+          ))}
+        </div>
 
-        {gameState === 'feedback' && (
-          <div className="game-phase">
-            <h3>Evaluando respuesta...</h3>
-            <p className="subtitle">
-              {userSequence.every((c, i) => c.id === targetSequence[i]?.id)
-                ? '✅ ¡Excelente! Secuencia correcta.'
-                : '❌ Hubo un error en la secuencia.'}
-            </p>
+        {feedback && (
+          <div className="feedback-banner" style={{ marginTop: '2rem' }}>
+            {feedback.ok ? (
+              <span className="text-success">✅ ¡Secuencia correcta!</span>
+            ) : (
+              <span className="text-danger">💥 Te equivocaste de color.</span>
+            )}
           </div>
         )}
       </div>
