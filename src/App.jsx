@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from './db'
 import './App.css'
 
 import Memorygame from './components/Memorygame'
@@ -9,8 +11,6 @@ import CoordinationGame from './components/CoordinationGame'
 import VisuospatialGame from './components/VisuospatialGame'
 import BounceGame from './components/BounceGame'
 
-
-// AHORA LAS CATEGORÍAS TIENEN UN ARRAY DE JUEGOS
 const CATEGORIES = [
   { 
     id: 'memory', 
@@ -18,15 +18,15 @@ const CATEGORIES = [
     icon: '🧠', 
     games: [
       { id: 'sequence', name: 'Repetir secuencias' },
-      
     ] 
   },
   { 
     id: 'attention', 
     name: 'Atención', 
     icon: '🎯', 
-    games: [{ id: 'diff', name: 'Elemento diferente' },
-            { id: 'path', name: 'Ruta Oculta (Conejo)' }
+    games: [
+      { id: 'diff', name: 'Elemento diferente' },
+      { id: 'path', name: 'Ruta Oculta (Conejo)' }
     ] 
   },
   { 
@@ -39,8 +39,9 @@ const CATEGORIES = [
     id: 'coordination', 
     name: 'Coordinación', 
     icon: '🤝', 
-    games: [{ id: 'obs', name: 'Evitar obstáculos' },
-            { id: 'bounce', name: 'Control de rebote'}
+    games: [
+      { id: 'obs', name: 'Evitar obstáculos' },
+      { id: 'bounce', name: 'Control de rebote'}
     ] 
   },
   { 
@@ -49,18 +50,12 @@ const CATEGORIES = [
     icon: '👁️', 
     games: [{ id: 'sym', name: 'Patrones simétricos' }] 
   },
-
 ]
 
 function App() {
-  const [patients, setPatients] = useState(() => {
-    try {
-      const saved = localStorage.getItem('patients_data')
-      return saved ? JSON.parse(saved) : []
-    } catch {
-      return []
-    }
-  })
+  // Cargar Pacientes y Sesiones desde la BD local (IndexedDB)
+  const patients = useLiveQuery(() => db.patients.toArray(), []) || []
+  const allSessions = useLiveQuery(() => db.sessions.toArray(), []) || []
 
   const [name, setName] = useState('')
   const [age, setAge] = useState('')
@@ -70,7 +65,6 @@ function App() {
   const [viewMode, setViewMode] = useState('list')
   const [selectedSession, setSelectedSession] = useState(null)
 
-  // ESTADO ACTUALIZADO PARA GUARDAR categoryId y gameId
   const [gameConfig, setGameConfig] = useState({
     categoryId: 'memory',
     gameId: 'sequence',
@@ -80,61 +74,57 @@ function App() {
 
   const activePatient = patients.find((p) => p.id === selectedPatientId) || null
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('patients_data', JSON.stringify(patients))
-    } catch (e) {
-      console.error('Error al guardar en localStorage', e)
-    }
-  }, [patients])
-
-  const handleAddPatient = (e) => {
+  // Registrar nuevo paciente en la BD local
+  const handleAddPatient = async (e) => {
     e.preventDefault()
     if (!name.trim() || !age) return
 
-    const newPatient = {
-      id: 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    const newId = 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)
+    await db.patients.add({
+      id: newId,
       name: name.trim(),
       age: Number(age),
       notes: notes.trim(),
-      createdAt: new Date().toLocaleDateString(),
-      history: []
-    }
+      createdAt: new Date().toLocaleDateString()
+    })
 
-    setPatients([newPatient, ...patients])
     setName('')
     setAge('')
     setNotes('')
   }
 
-  const handleDeletePatient = (id) => {
-    setPatients(patients.filter((p) => p.id !== id))
+  // Eliminar paciente y sus sesiones de la BD local
+  const handleDeletePatient = async (id) => {
+    await db.patients.delete(id)
+    await db.sessions.where('patientId').equals(id).delete()
     if (selectedPatientId === id) {
       setSelectedPatientId(null)
       setViewMode('list')
     }
   }
 
-  const handleUpdateNotes = (id, newNotes) => {
-    setPatients(patients.map((p) => (p.id === id ? { ...p, notes: newNotes } : p)))
-  }
-
-  const handleFinishGame = (sessionResult) => {
+  // Guardar resultado del juego finalizado en la BD local
+  const handleFinishGame = async (sessionResult) => {
     if (!activePatient) return
 
-    const updatedHistory = [sessionResult, ...(activePatient.history || [])]
-    const updatedPatients = patients.map((p) =>
-      p.id === activePatient.id ? { ...p, history: updatedHistory } : p
-    )
+    const record = {
+      ...sessionResult,
+      patientId: activePatient.id,
+      timestamp: Date.now()
+    }
 
-    setPatients(updatedPatients)
-    setSelectedSession(sessionResult)
+    await db.sessions.add(record)
+    setSelectedSession(record)
     setViewMode('history')
   }
 
+  // Historial filtrado e invertido cronológicamente
+  const activePatientHistory = allSessions
+    .filter((s) => s.patientId === selectedPatientId)
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+
   const getCategoryStats = (categoryName) => {
-    if (!activePatient?.history) return { count: 0, accuracy: 0 }
-    const sessions = activePatient.history.filter((s) => s.category === categoryName)
+    const sessions = activePatientHistory.filter((s) => s.category === categoryName)
     if (sessions.length === 0) return { count: 0, accuracy: 0 }
     const totalAccuracy = sessions.reduce((acc, curr) => acc + curr.accuracy, 0)
     return {
@@ -143,7 +133,6 @@ function App() {
     }
   }
 
-  // Encontrar sub-juegos de la categoría seleccionada
   const activeCategoryObj = CATEGORIES.find(c => c.id === gameConfig.categoryId)
 
   return (
@@ -183,11 +172,12 @@ function App() {
               <ul className="patient-list">
                 {patients.map((patient) => {
                   const isSelected = activePatient?.id === patient.id
+                  const patientSessions = allSessions.filter(s => s.patientId === patient.id)
                   return (
                     <li key={patient.id} className={`patient-item ${isSelected ? 'selected' : ''}`} onClick={() => setSelectedPatientId(patient.id)}>
                       <div className="patient-info">
                         <strong>👤 {patient.name}</strong>
-                        <span>{patient.age} años | {patient.history?.length || 0} actividades</span>
+                        <span>{patient.age} años | {patientSessions.length} actividades</span>
                       </div>
                       <div className="patient-actions">
                         <button className="btn btn-outline" onClick={(e) => { e.stopPropagation(); setSelectedPatientId(patient.id); setViewMode('profile'); }}>Perfil</button>
@@ -211,6 +201,7 @@ function App() {
             <h2>{activePatient.name}</h2>
             <span className="badge">Edad: {activePatient.age} años</span>
           </div>
+          {activePatient.notes && <p style={{ marginTop: '0.5rem', color: 'var(--text-muted)' }}>📝 {activePatient.notes}</p>}
           <hr className="divider" />
           <h3>Rendimiento por Categoría</h3>
           <div className="category-stats-grid">
@@ -221,7 +212,7 @@ function App() {
                   key={cat.id}
                   className="category-stat-card"
                   onClick={() => {
-                    setGameConfig({ categoryId: cat.id, gameId: cat.games[0].id, difficulty: 'facil' })
+                    setGameConfig({ categoryId: cat.id, gameId: cat.games[0].id, difficulty: 'facil', customTime: '' })
                     setViewMode('game-setup')
                   }}
                 >
@@ -245,11 +236,11 @@ function App() {
         <section className="card detail-card">
           <button className="btn btn-outline back-btn" onClick={() => setViewMode('list')}>← Volver a Pacientes</button>
           <h2>Historial de Actividades: {activePatient.name}</h2>
-          {!activePatient.history || activePatient.history.length === 0 ? (
+          {activePatientHistory.length === 0 ? (
             <p className="empty-text">Sin registros de actividades.</p>
           ) : (
             <div className="history-container">
-              {activePatient.history.map((record) => (
+              {activePatientHistory.map((record) => (
                 <div key={record.id} className="history-session-card" onClick={() => setSelectedSession(selectedSession?.id === record.id ? null : record)}>
                   <div className="session-summary">
                     <div>
@@ -294,7 +285,7 @@ function App() {
         </section>
       )}
 
-      {/* VISTA 4: CONFIGURACIÓN - ACTUALIZADA CON DOBLE SELECTOR */}
+      {/* VISTA 4: CONFIGURACIÓN DE ACTIVIDAD */}
       {viewMode === 'game-setup' && activePatient && (
         <section className="card detail-card">
           <button className="btn btn-outline back-btn" onClick={() => setViewMode('profile')}>← Volver al Perfil</button>
@@ -346,10 +337,10 @@ function App() {
                 ))}
               </div>
             </div>
-            {/* --- NUEVO BLOQUE: CONFIGURACIÓN DE TIEMPO MANUAL --- */}
+
             {(gameConfig.categoryId === 'memory' || gameConfig.categoryId === 'coordination' || (gameConfig.categoryId === 'attention' && gameConfig.gameId === 'path')) && (
               <div className="field" style={{ marginTop: '1rem' }}>
-                <label>Tiempo de duración(segundos)</label>
+                <label>Tiempo de duración (segundos)</label>
                 <input
                   type="number"
                   min="1"
@@ -358,11 +349,9 @@ function App() {
                   value={gameConfig.customTime}
                   onChange={(e) => setGameConfig({ ...gameConfig, customTime: e.target.value })}
                   className="select-input"
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: 'var(--bg)', color: 'var(--text)' }}
                 />
               </div>
             )}
-            {/* ---------------------------------------------------- */}
 
             <button className="btn btn-success" style={{ marginTop: '1.5rem', width: '100%' }} onClick={() => setViewMode('playing')}>
               Iniciar Actividad →
@@ -382,7 +371,6 @@ function App() {
             <PathGame difficulty={gameConfig.difficulty} customTime={gameConfig.customTime} onFinish={handleFinishGame} onCancel={() => setViewMode('game-setup')} />
           )}
 
-          {/* ✅ AGREGADO gameId === 'diff' PARA QUE NO COLISIONE */}
           {gameConfig.categoryId === 'attention' && gameConfig.gameId === 'diff' && (
             <AttentionGame difficulty={gameConfig.difficulty} onFinish={handleFinishGame} onCancel={() => setViewMode('game-setup')} />
           )}
@@ -404,6 +392,7 @@ function App() {
           )}
         </>
       )}
+
       {activePatient && viewMode === 'list' && (
         <footer className="active-bar">
           <div>
@@ -414,9 +403,7 @@ function App() {
           </button>
         </footer>
       )}
-      
     </div>
-    
   )
 }
 
